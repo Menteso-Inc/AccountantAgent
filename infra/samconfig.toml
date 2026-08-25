@@ -1,0 +1,21 @@
+version = 0.1
+
+[default.global.parameters]
+stack_name = "invoice-request-agent"
+
+[default.build.parameters]
+cached = true
+parallel = true
+
+[default.deploy.parameters]
+capabilities = "CAPABILITY_IAM"
+confirm_changeset = true
+resolve_s3 = true
+region = "us-east-1"
+# After GCP setup (docs/SETUP.md section 6), pass the push values here or via CLI:
+#   sam deploy --parameter-overrides \
+#     PubSubTopic="projects/PROJ/topics/gmail-invoice-requests" \
+#     PushAudience="https://XXXX.execute-api.us-east-1.amazonaws.com/gmail/push" \
+#     PushServiceAccountEmail="gmail-push-invoker@PROJ.iam.gserviceaccount.com"
+# Before push is set up, run polling faster:
+#   sam deploy --parameter-overrides PollScheduleExpression="rate(2 minutes)"

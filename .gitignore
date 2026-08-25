@@ -1,0 +1,32 @@
+# Secrets — NEVER commit these
+.env
+*.env
+!.env.example
+token.json
+credentials.json
+client_secret*.json
+service_account*.json
+*service-account*.json
+invoicereqagent-*.json
+self_client.json
+*.pem
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+
+# AWS SAM build artifacts
+.aws-sam/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# generated invoice PDFs
+*.pdf

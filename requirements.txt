@@ -1,0 +1,20 @@
+# Runtime dependencies for the Invoice Request Agent
+# Install with:  pip install -r requirements.txt
+
+# --- Google / Gmail ---
+google-api-python-client==2.140.0
+google-auth==2.34.0
+google-auth-oauthlib==1.2.1        # only needed by scripts/get_google_oauth_token.py
+
+# --- HTTP (Zoho CRM + Wave GraphQL) ---
+requests==2.32.3
+
+# --- Claude (parsing fallback) ---
+anthropic==0.40.0
+
+# --- AWS (Secrets Manager + DynamoDB). Preinstalled in the Lambda runtime, ---
+# --- listed here so local runs work too. ---
+boto3==1.35.24
+
+# --- Local dev convenience: load .env files ---
+python-dotenv==1.0.1

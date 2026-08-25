@@ -1,0 +1,168 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Invoice Request Agent — real-time Gmail push (Pub/Sub -> API Gateway -> Lambda)
+  plus a safety-net poll. Generates Wave invoices from Zoho CRM data and replies
+  with the PDF attached.
+
+Parameters:
+  PollScheduleExpression:
+    Type: String
+    Default: "rate(30 minutes)"
+    Description: >
+      Safety-net poll frequency. Real-time comes from push; this just backstops
+      missed notifications. If you have NOT set up push yet, lower to
+      "rate(2 minutes)".
+  SecretName:
+    Type: String
+    Default: "invoice-request-agent/config"
+    Description: Secrets Manager secret holding all credentials as JSON.
+  PubSubTopic:
+    Type: String
+    Default: ""
+    Description: projects/<gcp-project>/topics/<topic> (from docs/SETUP.md section 6).
+  PushAudience:
+    Type: String
+    Default: ""
+    Description: OIDC audience configured on the Pub/Sub push subscription.
+  PushServiceAccountEmail:
+    Type: String
+    Default: ""
+    Description: Service account email Pub/Sub uses to sign OIDC tokens.
+
+Globals:
+  Function:
+    Timeout: 120
+    MemorySize: 512
+    Runtime: python3.12
+    CodeUri: ../
+    Environment:
+      Variables:
+        APP_ENV: aws
+        SECRETS_MANAGER_NAME: !Ref SecretName
+        DDB_TABLE_NAME: !Ref ProcessedTable
+        LOG_LEVEL: INFO
+        PUBSUB_TOPIC: !Ref PubSubTopic
+        PUSH_AUDIENCE: !Ref PushAudience
+        PUSH_SA_EMAIL: !Ref PushServiceAccountEmail
+
+Resources:
+
+  ProcessedTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: invoice-request-agent-processed
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: message_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: message_id
+          KeyType: HASH
+
+  DeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: invoice-request-agent-dlq
+      MessageRetentionPeriod: 1209600   # 14 days
+
+  ConfigSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Ref SecretName
+      Description: All credentials for the Invoice Request Agent (JSON).
+
+  # --- Real-time push: Pub/Sub -> API Gateway -> this function ---------------
+  PushFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: invoice-request-agent-push
+      Handler: src.push_handler.lambda_handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ProcessedTable
+        - Statement:
+            - Effect: Allow
+              Action: secretsmanager:GetSecretValue
+              Resource: !Ref ConfigSecret
+      Events:
+        GmailPush:
+          Type: HttpApi
+          Properties:
+            Path: /gmail/push
+            Method: POST
+
+  # --- Renews the Gmail watch daily (watch expires after ~7 days) ------------
+  WatchRenewFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: invoice-request-agent-watch-renew
+      Handler: src.watch_handler.lambda_handler
+      DeadLetterQueue:
+        Type: SQS
+        TargetArn: !GetAtt DeadLetterQueue.Arn
+      Policies:
+        - SQSSendMessagePolicy:
+            QueueName: !GetAtt DeadLetterQueue.QueueName
+        - Statement:
+            - Effect: Allow
+              Action: secretsmanager:GetSecretValue
+              Resource: !Ref ConfigSecret
+      Events:
+        DailyRenew:
+          Type: Schedule
+          Properties:
+            Schedule: "rate(1 day)"
+            Description: Renew the Gmail push watch.
+
+  # --- Safety-net poll (backstops any missed push notifications) -------------
+  AgentFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: invoice-request-agent-poll
+      Handler: src.handler.lambda_handler
+      DeadLetterQueue:
+        Type: SQS
+        TargetArn: !GetAtt DeadLetterQueue.Arn
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ProcessedTable
+        - SQSSendMessagePolicy:
+            QueueName: !GetAtt DeadLetterQueue.QueueName
+        - Statement:
+            - Effect: Allow
+              Action: secretsmanager:GetSecretValue
+              Resource: !Ref ConfigSecret
+      Events:
+        PollSchedule:
+          Type: Schedule
+          Properties:
+            Schedule: !Ref PollScheduleExpression
+            Description: Safety-net poll of the mailbox.
+
+  PushErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: invoice-request-agent-push-errors
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref PushFunction
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+
+Outputs:
+  PushEndpointUrl:
+    Description: >
+      Use this as the Pub/Sub push subscription "endpoint" (docs/SETUP.md sec 6).
+    Value: !Sub "https://${ServerlessHttpApi}.execute-api.${AWS::Region}.amazonaws.com/gmail/push"
+  SecretName:
+    Description: Populate this secret with your credentials JSON (see SETUP.md).
+    Value: !Ref ConfigSecret
+  DeadLetterQueueUrl:
+    Value: !Ref DeadLetterQueue
