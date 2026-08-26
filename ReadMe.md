@@ -1,5 +1,9 @@
 # Invoice Request Agent
 
+> 📖 **Full documentation: [AGENT.md](AGENT.md)** — what it does, the end-to-end
+> flow, the business rules, architecture, and everything to understand. Credential
+> setup is in [docs/SETUP.md](docs/SETUP.md).
+
 An autonomous service that turns invoice-request emails into sent invoices — no
 human in the loop.
 
